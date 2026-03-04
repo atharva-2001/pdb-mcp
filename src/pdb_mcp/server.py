@@ -22,17 +22,26 @@ def start_debug(
     args: list[str] | None = None,
     python_path: str | None = None,
     use_pytest: bool = False,
+    ssh_host: str | None = None,
+    remote_cwd: str | None = None,
+    remote_python: str | None = None,
 ) -> str:
     """Start a pdb debugging session on a Python file.
 
     Args:
         file_path: Path to the Python file to debug.
         args: Optional arguments to pass to the script.
-        python_path: Python interpreter to use. Auto-detected if not provided.
+        python_path: Python interpreter to use (local). Auto-detected if not provided.
         use_pytest: If True, run with pytest --pdb instead of python -m pdb.
+        ssh_host: SSH host to debug on remotely (e.g. "myserver" or "user@host"). Requires key-based SSH auth configured in ~/.ssh/.
+        remote_cwd: Working directory on the remote host. Required for remote debugging.
+        remote_python: Python interpreter path on the remote host. Defaults to "python3".
     """
     try:
-        output = _session.start(file_path, args=args, python_path=python_path, use_pytest=use_pytest)
+        output = _session.start(
+            file_path, args=args, python_path=python_path, use_pytest=use_pytest,
+            ssh_host=ssh_host, remote_cwd=remote_cwd, remote_python=remote_python,
+        )
         return f"Debugging started: {_session.file_path}\n\n{output}"
     except Exception as e:
         return f"Error: {e}"

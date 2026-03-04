@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import sys
 
@@ -15,14 +16,35 @@ class PdbSession:
         self.project_root = None
         self.file_path = None
         self._start_args = None  # stored for restart
+        self._is_remote = False
 
     @property
     def alive(self):
         return self.child is not None and self.child.isalive()
 
-    def start(self, file_path, args=None, python_path=None, use_pytest=False):
+    def start(self, file_path, args=None, python_path=None, use_pytest=False,
+              ssh_host=None, remote_cwd=None, remote_python=None):
         if self.alive:
             raise RuntimeError("Session already running. Call end() first.")
+
+        self._start_args = {
+            "file_path": file_path,
+            "args": args,
+            "python_path": python_path,
+            "use_pytest": use_pytest,
+            "ssh_host": ssh_host,
+            "remote_cwd": remote_cwd,
+            "remote_python": remote_python,
+        }
+
+        if ssh_host:
+            return self._start_remote(file_path, args, remote_python, use_pytest,
+                                      ssh_host, remote_cwd)
+        else:
+            return self._start_local(file_path, args, python_path, use_pytest)
+
+    def _start_local(self, file_path, args, python_path, use_pytest):
+        self._is_remote = False
 
         abs_file = os.path.abspath(file_path)
         if not os.path.exists(abs_file):
@@ -30,12 +52,6 @@ class PdbSession:
 
         self.file_path = abs_file
         self.project_root = self._find_project_root(os.path.dirname(abs_file))
-        self._start_args = {
-            "file_path": file_path,
-            "args": args,
-            "python_path": python_path,
-            "use_pytest": use_pytest,
-        }
 
         python = python_path or self._find_python()
 
@@ -51,7 +67,6 @@ class PdbSession:
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-        # Ensure the project root is on PYTHONPATH so imports work
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = self.project_root + (os.pathsep + existing if existing else "")
 
@@ -63,7 +78,41 @@ class PdbSession:
             timeout=DEFAULT_TIMEOUT,
         )
 
-        # Wait for initial pdb prompt
+        return self._wait_for_prompt()
+
+    def _start_remote(self, file_path, args, remote_python, use_pytest,
+                      ssh_host, remote_cwd):
+        self._is_remote = True
+        self.file_path = file_path
+
+        python = remote_python or "python3"
+
+        if use_pytest:
+            pdb_cmd = f"{python} -m pytest --pdb -s --pdbcls=pdb:Pdb {file_path}"
+        else:
+            pdb_cmd = f"{python} -m pdb {file_path}"
+
+        if args:
+            pdb_cmd += " " + " ".join(args)
+
+        # Wrap in cd if remote_cwd provided
+        if remote_cwd:
+            remote_cmd = f"cd {remote_cwd} && PYTHONUNBUFFERED=1 {pdb_cmd}"
+        else:
+            remote_cmd = f"PYTHONUNBUFFERED=1 {pdb_cmd}"
+
+        # ssh -t forces PTY allocation so pdb works properly
+        cmd = f"ssh -t {ssh_host} {shlex.quote(remote_cmd)}"
+
+        self.child = pexpect.spawn(
+            cmd,
+            encoding="utf-8",
+            timeout=DEFAULT_TIMEOUT,
+        )
+
+        return self._wait_for_prompt()
+
+    def _wait_for_prompt(self):
         try:
             self.child.expect(PDB_PROMPT, timeout=15)
         except pexpect.TIMEOUT:
