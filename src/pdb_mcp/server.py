@@ -1,11 +1,19 @@
+from contextlib import asynccontextmanager
+
 from mcp.server.fastmcp import FastMCP
 
 from pdb_mcp.session import PdbSession
 
-mcp = FastMCP("pdb-mcp")
-
-# Single global session for now
 _session = PdbSession()
+
+
+@asynccontextmanager
+async def lifespan(server):
+    yield
+    _session.end()
+
+
+mcp = FastMCP("pdb-mcp", lifespan=lifespan)
 
 
 @mcp.tool()
@@ -31,19 +39,22 @@ def start_debug(
 
 
 @mcp.tool()
-def run_command(command: str) -> str:
+def run_command(command: str, timeout: int | None = None) -> str:
     """Send any pdb command. This is the escape hatch for anything not covered by other tools.
 
     Common commands: n (next), s (step), c (continue), r (return),
     p expr (print), pp expr (pretty print), l (list), ll (long list),
     a (args), w (where/stack), u (up), d (down), b file:line (breakpoint),
-    cl num (clear breakpoint), q (quit), h (help)
+    cl num (clear breakpoint), q (quit), h (help),
+    until <line> (run until line), jump <line> (set execution point),
+    display expr (auto-print expr at every stop), undisplay expr
 
     Args:
         command: The pdb command string.
+        timeout: Seconds to wait for response. Defaults to 10. Increase for long-running commands.
     """
     try:
-        return _session.send(command)
+        return _session.send(command, timeout=timeout)
     except Exception as e:
         return f"Error: {e}"
 
@@ -67,19 +78,27 @@ def next_line() -> str:
 
 
 @mcp.tool()
-def continue_exec() -> str:
-    """Continue execution until the next breakpoint (pdb 'c' command)."""
+def continue_exec(timeout: int = 30) -> str:
+    """Continue execution until the next breakpoint (pdb 'c' command).
+
+    Args:
+        timeout: Seconds to wait for next breakpoint. Defaults to 30.
+    """
     try:
-        return _session.send("c")
+        return _session.send("c", timeout=timeout)
     except Exception as e:
         return f"Error: {e}"
 
 
 @mcp.tool()
-def return_exec() -> str:
-    """Continue execution until the current function returns (pdb 'r' command)."""
+def return_exec(timeout: int = 30) -> str:
+    """Continue execution until the current function returns (pdb 'r' command).
+
+    Args:
+        timeout: Seconds to wait. Defaults to 30.
+    """
     try:
-        return _session.send("r")
+        return _session.send("r", timeout=timeout)
     except Exception as e:
         return f"Error: {e}"
 
@@ -174,6 +193,73 @@ def list_source(lines: int | None = None) -> str:
     try:
         cmd = f"l .{'' if lines is None else f', {lines}'}"
         return _session.send(cmd)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def restart() -> str:
+    """Restart the debugging session from the beginning with the same file and arguments.
+    Useful after editing code — no need to call end_debug + start_debug.
+    """
+    try:
+        output = _session.restart()
+        return f"Restarted: {_session.file_path}\n\n{output}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def until(line: int) -> str:
+    """Continue execution until a line greater than or equal to the given line is reached.
+    Useful for skipping past loops.
+
+    Args:
+        line: Line number to run until.
+    """
+    try:
+        return _session.send(f"until {line}", timeout=30)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def jump(line: int) -> str:
+    """Set the next line to be executed. Does not execute intervening code.
+
+    Args:
+        line: Line number to jump to.
+    """
+    try:
+        return _session.send(f"jump {line}")
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def display(expression: str) -> str:
+    """Auto-print an expression every time execution stops.
+    Call again with the same expression to remove it.
+    Use without arguments (via run_command('display')) to see all active display expressions.
+
+    Args:
+        expression: Python expression to watch (e.g., self.state, len(items)).
+    """
+    try:
+        return _session.send(f"display {expression}")
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def undisplay(expression: str) -> str:
+    """Remove a display expression so it no longer auto-prints at each stop.
+
+    Args:
+        expression: The expression to stop watching.
+    """
+    try:
+        return _session.send(f"undisplay {expression}")
     except Exception as e:
         return f"Error: {e}"
 

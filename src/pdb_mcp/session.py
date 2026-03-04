@@ -6,7 +6,7 @@ import pexpect
 
 
 PDB_PROMPT = r"\(Pdb\)\s*$"
-TIMEOUT = 10
+DEFAULT_TIMEOUT = 10
 
 
 class PdbSession:
@@ -14,6 +14,7 @@ class PdbSession:
         self.child = None
         self.project_root = None
         self.file_path = None
+        self._start_args = None  # stored for restart
 
     @property
     def alive(self):
@@ -29,6 +30,12 @@ class PdbSession:
 
         self.file_path = abs_file
         self.project_root = self._find_project_root(os.path.dirname(abs_file))
+        self._start_args = {
+            "file_path": file_path,
+            "args": args,
+            "python_path": python_path,
+            "use_pytest": use_pytest,
+        }
 
         python = python_path or self._find_python()
 
@@ -53,7 +60,7 @@ class PdbSession:
             cwd=self.project_root,
             env=env,
             encoding="utf-8",
-            timeout=TIMEOUT,
+            timeout=DEFAULT_TIMEOUT,
         )
 
         # Wait for initial pdb prompt
@@ -70,14 +77,21 @@ class PdbSession:
 
         return self.child.before or ""
 
-    def send(self, command):
+    def restart(self):
+        if self._start_args is None:
+            raise RuntimeError("No previous session to restart. Use start() first.")
+        saved = self._start_args.copy()
+        self.end()
+        return self.start(**saved)
+
+    def send(self, command, timeout=None):
         if not self.alive:
             raise RuntimeError("No active session.")
 
         self.child.sendline(command)
 
         try:
-            self.child.expect(PDB_PROMPT, timeout=TIMEOUT)
+            self.child.expect(PDB_PROMPT, timeout=timeout or DEFAULT_TIMEOUT)
         except pexpect.TIMEOUT:
             return (self.child.before or "") + "\n[timeout waiting for (Pdb) prompt]"
         except pexpect.EOF:
