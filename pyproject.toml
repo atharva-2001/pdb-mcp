@@ -1,0 +1,14 @@
+[project]
+name = "pdb-mcp"
+version = "0.1.0"
+description = "MCP server for interactive Python debugging via pdb"
+requires-python = ">=3.10"
+dependencies = ["mcp[cli]>=1.6.0", "pexpect>=4.9"]
+license = { text = "MIT" }
+
+[project.scripts]
+pdb-mcp = "pdb_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
